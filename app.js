@@ -77,12 +77,23 @@
   function markInvalid(el, bad) {
     el.classList.toggle("invalid", !!bad);
   }
-  function readFileAsDataURL(file) {
+  function compressImage(file) {
+    // Resize to max 1600px and re-encode as JPEG so uploads stay small.
     return new Promise(function (resolve, reject) {
-      var r = new FileReader();
-      r.onload = function () { resolve(r.result); };
-      r.onerror = reject;
-      r.readAsDataURL(file);
+      var img = new Image();
+      var url = URL.createObjectURL(file);
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var max = 1600, w = img.width, h = img.height;
+        if (Math.max(w, h) > max) { var sc = max / Math.max(w, h); w = Math.round(w * sc); h = Math.round(h * sc); }
+        var c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        var dataUrl = c.toDataURL("image/jpeg", 0.82);
+        resolve({ name: file.name.replace(/\.[^.]+$/, "") + ".jpg", data: dataUrl.split(",")[1] });
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("image_read_failed")); };
+      img.src = url;
     });
   }
 
@@ -142,8 +153,8 @@
     setStatus("Uploading your application, hold on...", "");
 
     Promise.all([
-      insightsFile ? readFileAsDataURL(insightsFile) : null,
-      demoFile ? readFileAsDataURL(demoFile) : null
+      insightsFile ? compressImage(insightsFile) : null,
+      demoFile ? compressImage(demoFile) : null
     ]).then(function (imgs) {
       var payload = {
         name: document.getElementById("f-name").value.trim(),
@@ -160,14 +171,15 @@
         whatsapp: document.getElementById("f-wa").value.trim(),
         email: document.getElementById("f-email").value.trim(),
         consent: "yes",
+        website: document.getElementById("f-website").value,
         elapsed_s: Math.round((Date.now() - startedAt) / 1000),
         insights_file: imgs[0] ? { name: insightsFile.name, data: imgs[0] } : null,
         demographics_file: imgs[1] && demoFile ? { name: demoFile.name, data: imgs[1] } : null
       };
 
-      return fetch(CAPTR_CONFIG.endpoint, {
+      return fetch("/api/apply", {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       }).then(function (res) { return res.json(); });
     }).then(function (out) {
