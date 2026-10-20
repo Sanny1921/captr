@@ -172,3 +172,12 @@ button[disabled]{opacity:.55;cursor:wait;transform:none!important}
   .reveal{opacity:1;transform:none;transition:none}
   .hero-glow{animation:none}
 }
+
+/* mobile nav: visible compact menu row on small screens */
+@media(max-width:759px){
+  html{scroll-padding-top:118px}
+  .topbar-in{flex-wrap:wrap;height:auto;padding-top:8px}
+  .nav{display:flex;order:3;width:100%;gap:18px;overflow-x:auto;padding:2px 0 9px;margin-left:0;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{font-size:13px;white-space:nowrap;padding:4px 2px}
+}
