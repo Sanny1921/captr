@@ -182,3 +182,11 @@ button[disabled]{opacity:.55;cursor:wait;transform:none!important}
   .nav::-webkit-scrollbar{display:none}
   .nav a{font-size:13px;white-space:nowrap;padding:4px 2px}
 }
+
+/* service flow diagram (truthful service mechanism, no fabricated imagery) */
+.flow{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:46px}
+.flow-node{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 20px;text-align:center;min-width:132px}
+.flow-node svg{width:34px;height:34px;color:var(--orange2);margin-bottom:8px}
+.flow-node span{display:block;font-size:13.5px;font-weight:600;color:var(--text)}
+.flow-arrow{color:var(--orange);font-size:22px;font-weight:700}
+@media(max-width:759px){.flow{flex-direction:column}.flow-arrow{transform:rotate(90deg)}.flow-node{width:100%;max-width:300px}}
