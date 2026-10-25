@@ -147,6 +147,12 @@
       document.getElementById("formThanks").hidden = false;
       return;
     }
+    // speed trap: humans take more than a couple of seconds
+    if (Date.now() - startedAt < 3000) {
+      form.hidden = true;
+      document.getElementById("formThanks").hidden = false;
+      return;
+    }
 
     btn.disabled = true;
     btn.textContent = "Sending...";
@@ -156,34 +162,43 @@
       insightsFile ? compressImage(insightsFile) : null,
       demoFile ? compressImage(demoFile) : null
     ]).then(function (imgs) {
-      var payload = {
-        name: document.getElementById("f-name").value.trim(),
-        instagram: document.getElementById("f-ig").value.trim(),
-        ig_link: document.getElementById("f-iglink").value.trim(),
-        other_platforms: document.getElementById("f-other").value.trim(),
-        followers: document.getElementById("f-followers").value.trim(),
-        avg_views: document.getElementById("f-views").value.trim(),
-        engagement: document.getElementById("f-eng").value.trim(),
-        content_type: typeSel.value,
-        city: document.getElementById("f-city").value.trim(),
-        languages: document.getElementById("f-lang").value.trim(),
-        collabs: document.getElementById("f-collabs").value.trim(),
-        whatsapp: document.getElementById("f-wa").value.trim(),
-        email: document.getElementById("f-email").value.trim(),
-        consent: "yes",
-        website: document.getElementById("f-website").value,
-        elapsed_s: Math.round((Date.now() - startedAt) / 1000),
-        insights_file: imgs[0] ? { name: insightsFile.name, data: imgs[0] } : null,
-        demographics_file: imgs[1] && demoFile ? { name: demoFile.name, data: imgs[1] } : null
-      };
+      var name = document.getElementById("f-name").value.trim();
+      var instagram = document.getElementById("f-ig").value.trim();
+      var email = document.getElementById("f-email").value.trim();
+      var fields = [
+        ["Name", name],
+        ["Instagram handle", instagram],
+        ["Instagram profile link", document.getElementById("f-iglink").value.trim()],
+        ["Other platforms", document.getElementById("f-other").value.trim()],
+        ["Current followers", document.getElementById("f-followers").value.trim()],
+        ["Average views (last 30 days)", document.getElementById("f-views").value.trim()],
+        ["Engagement rate", document.getElementById("f-eng").value.trim()],
+        ["Content type", typeSel.value],
+        ["City", document.getElementById("f-city").value.trim()],
+        ["Languages", document.getElementById("f-lang").value.trim()],
+        ["Past brand collaborations", document.getElementById("f-collabs").value.trim()],
+        ["WhatsApp", document.getElementById("f-wa").value.trim()],
+        ["Email", email]
+      ];
+      var fd = new FormData();
+      fd.append("_subject", "New creator application: " + name.slice(0, 80) + " (" + instagram.slice(0, 60) + ")");
+      fd.append("_replyto", email.slice(0, 120));
+      fd.append("_captcha", "false"); // our own honeypot + speed trap already ran
+      fd.append("_template", "table");
+      fd.append("_honey", document.getElementById("f-website").value);
+      fields.forEach(function (pair) { fd.append(pair[0], pair[1] || "-"); });
+      fd.append("Consent", "Agreed to be contacted on WhatsApp or email");
 
-      return fetch("/api/apply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      }).then(function (res) { return res.json(); });
+      function toBlob(img) {
+        return img ? fetch("data:image/jpeg;base64," + img.data).then(function (r) { return r.blob(); }) : null;
+      }
+      return Promise.all([toBlob(imgs[0]), toBlob(imgs[1] && demoFile ? imgs[1] : null)]).then(function (blobs) {
+        if (blobs[0]) fd.append("Insights screenshot (last 30 days)", blobs[0], imgs[0].name);
+        if (blobs[1]) fd.append("Audience demographics screenshot", blobs[1], imgs[1].name);
+        return fetch(CAPTR_CONFIG.formEndpoint, { method: "POST", body: fd }).then(function (res) { return res.json(); });
+      });
     }).then(function (out) {
-      if (out && out.ok) {
+      if (out && out.success === "true") {
         form.hidden = true;
         var th = document.getElementById("formThanks");
         th.hidden = false;
