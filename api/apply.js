@@ -1,7 +1,16 @@
 // CAPTR creator-application endpoint.
 // Receives the join form as JSON (images already compressed to JPEG base64
-// by the browser) and emails it to the agency inbox via Mailjet's Send API.
-// Secrets live only in Vercel env vars (MJ_API_KEY, MJ_SECRET, SENDER_EMAIL).
+// by the browser) and emails it to the agency inbox.
+// Provider is chosen by env vars, in order:
+//   1. FORMSUBMIT_ENDPOINT  -> relay via FormSubmit (free hosted form service;
+//      delivers from its own domain, attachments up to 10MB, Reply-To the
+//      applicant's email). Set to the https://formsubmit.co/<target-or-alias>
+//      URL. First-ever submission triggers a one-time activation email to the
+//      agency inbox; deliveries start after that address clicks Activate.
+//   2. MJ_API_KEY/MJ_SECRET/SENDER_EMAIL -> Mailjet Send API (dormant: account
+//      suspended pending custom-domain + SPF/DKIM).
+//   3. neither -> 503 so the browser shows the mailto fallback.
+// Secrets live only in Vercel env vars.
 const AGENCY_EMAIL = "captrmarketingagency@gmail.com";
 
 const LABELS = [
@@ -30,6 +39,47 @@ function okB64(s) {
   return typeof s === "string" && /^[A-Za-z0-9+/=\r\n]+$/.test(s) && s.length < 6 * 1024 * 1024;
 }
 
+async function sendViaFormsubmit(b, attachments) {
+  const fd = new FormData();
+  fd.append("_subject", "New creator application: " + String(b.name).slice(0, 80) + " (" + String(b.instagram).slice(0, 60) + ")");
+  fd.append("_replyto", String(b.email).slice(0, 120));
+  fd.append("_captcha", "false"); // our own honeypot + speed trap already ran
+  fd.append("_template", "table");
+  for (const pair of LABELS) {
+    fd.append(pair[1], String(b[pair[0]] == null ? "" : b[pair[0]]).slice(0, 500) || "-");
+  }
+  fd.append("Consent", "Agreed to be contacted on WhatsApp or email");
+  for (const a of attachments) {
+    fd.append(a.field, new Blob([Buffer.from(a.content, "base64")], { type: "image/jpeg" }), a.name);
+  }
+  const r = await fetch(process.env.FORMSUBMIT_ENDPOINT, { method: "POST", body: fd });
+  if (!r.ok) throw new Error("formsubmit_" + r.status);
+}
+
+async function sendViaMailjet(b, attachments, html) {
+  const auth = Buffer.from(process.env.MJ_API_KEY + ":" + process.env.MJ_SECRET).toString("base64");
+  const r = await fetch("https://api.mailjet.com/v3.1/send", {
+    method: "POST",
+    headers: { authorization: "Basic " + auth, "content-type": "application/json" },
+    body: JSON.stringify({
+      Messages: [{
+        From: { Email: process.env.SENDER_EMAIL, Name: "CAPTR Website" },
+        To: [{ Email: AGENCY_EMAIL, Name: "CAPTR" }],
+        ReplyTo: { Email: String(b.email).slice(0, 120), Name: String(b.name).slice(0, 120) },
+        Subject: "New creator application: " + String(b.name).slice(0, 80) + " (" + String(b.instagram).slice(0, 60) + ")",
+        HTMLPart: html,
+        Attachments: attachments.map(function (a) {
+          return { ContentType: "image/jpeg", Filename: a.name, Base64Content: a.content };
+        })
+      }]
+    })
+  });
+  if (!r.ok) {
+    console.error("mailjet_error", r.status, await r.text());
+    throw new Error("mailjet_" + r.status);
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "method_not_allowed" });
   try {
@@ -45,9 +95,9 @@ export default async function handler(req, res) {
     }
     if (!b.insights_file || !okB64(b.insights_file.data)) return res.status(400).json({ error: "missing_insights" });
 
-    const attachments = [{ name: String(b.insights_file.name || "insights.jpg").slice(0, 80), content: b.insights_file.data }];
+    const attachments = [{ field: "Insights screenshot (last 30 days)", name: String(b.insights_file.name || "insights.jpg").slice(0, 80), content: b.insights_file.data }];
     if (b.demographics_file && okB64(b.demographics_file.data)) {
-      attachments.push({ name: String(b.demographics_file.name || "demographics.jpg").slice(0, 80), content: b.demographics_file.data });
+      attachments.push({ field: "Audience demographics screenshot", name: String(b.demographics_file.name || "demographics.jpg").slice(0, 80), content: b.demographics_file.data });
     }
 
     const rows = LABELS.map(function (pair) {
@@ -63,26 +113,13 @@ export default async function handler(req, res) {
       (attachments.length > 1 ? " (plus a demographics screenshot)" : "") +
       ". The creator agreed to be contacted on WhatsApp or email.</p>";
 
-    const auth = Buffer.from(process.env.MJ_API_KEY + ":" + process.env.MJ_SECRET).toString("base64");
-    const r = await fetch("https://api.mailjet.com/v3.1/send", {
-      method: "POST",
-      headers: { authorization: "Basic " + auth, "content-type": "application/json" },
-      body: JSON.stringify({
-        Messages: [{
-          From: { Email: process.env.SENDER_EMAIL, Name: "CAPTR Website" },
-          To: [{ Email: AGENCY_EMAIL, Name: "CAPTR" }],
-          ReplyTo: { Email: String(b.email).slice(0, 120), Name: String(b.name).slice(0, 120) },
-          Subject: "New creator application: " + String(b.name).slice(0, 80) + " (" + String(b.instagram).slice(0, 60) + ")",
-          HTMLPart: html,
-          Attachments: attachments.map(function (a) {
-            return { ContentType: "image/jpeg", Filename: a.name, Base64Content: a.content };
-          })
-        }]
-      })
-    });
-    if (!r.ok) {
-      console.error("mailjet_error", r.status, await r.text());
-      return res.status(502).json({ error: "send_failed" });
+    if (process.env.FORMSUBMIT_ENDPOINT) {
+      await sendViaFormsubmit(b, attachments);
+    } else if (process.env.MJ_API_KEY && process.env.MJ_SECRET && process.env.SENDER_EMAIL) {
+      await sendViaMailjet(b, attachments, html);
+    } else {
+      // No provider configured: tell the client to show the email fallback.
+      return res.status(503).json({ error: "email_unavailable" });
     }
     return res.json({ ok: true });
   } catch (e) {
